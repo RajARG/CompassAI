@@ -766,16 +766,17 @@ class Transformer(nn.Module):
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
     @torch.inference_mode()
-    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
+    def forward(self, tokens: torch.Tensor, attention_mask: torch.Tensor, start_pos: int = 0):
         """
         Forward pass for the Transformer model.
 
         Args:
             tokens (torch.Tensor): Input tensor of token IDs with shape (batch_size, seq_len).
+            attention_mask (torch.Tensor): Attention mask for the input tokens.
             start_pos (int, optional): Starting position in the sequence for rotary embeddings. Defaults to 0.
 
         Returns:
-            torch.Tensor: Logits tensor of shape (batch_size, vocab_size).
+            torch.Tensor: Logits tensor of shape (batch_size, 1).
         """
         seqlen = tokens.size(1)
         h = self.embed(tokens)
@@ -791,7 +792,7 @@ class Transformer(nn.Module):
             all_logits = [torch.empty_like(logits) for _ in range(world_size)]
             dist.all_gather(all_logits, logits)
             logits = torch.cat(all_logits, dim=-1)
-        return logits
+        return logits[:, 0]
 
 
 if __name__ == "__main__":

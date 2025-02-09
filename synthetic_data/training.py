@@ -44,11 +44,9 @@ class JsonDataset(Dataset):
     def __getitem__(self, idx):
         content, citations, label = self.data[idx]
         inputs = self.tokenizer(content, padding='max_length', truncation=True, max_length=self.max_length, return_tensors="pt")
-        labels = self.tokenizer(citations, padding='max_length', truncation=True, max_length=self.max_length, return_tensors="pt")
         return {
             'input_ids': inputs['input_ids'].squeeze(),
             'attention_mask': inputs['attention_mask'].squeeze(),
-            'labels': labels['input_ids'].squeeze(),
             'label': torch.tensor(label, dtype=torch.float)
         }
 
@@ -59,24 +57,31 @@ def train(model, dataloader, optimizer, scheduler, device, grad_clip):
     all_labels = []
     for batch in tqdm(dataloader, desc="Training"):
         inputs = batch['input_ids'].to(device)
-        labels = batch['labels'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
         label = batch['label'].to(device)
         optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        outputs = model(inputs, attention_mask=attention_mask)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(outputs, label.unsqueeze(1))
         loss.backward()
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
         scheduler.step()
         total_loss += loss.item()
-        preds = torch.argmax(outputs, dim=-1).view(-1).cpu().numpy()
+        
+        # Apply sigmoid and round to get binary predictions
+        preds = torch.round(torch.sigmoid(outputs)).cpu().numpy()
+        labels = label.cpu().numpy()
+        
         all_preds.extend(preds)
-        all_labels.extend(labels.view(-1).cpu().numpy())
+        all_labels.extend(labels)
+        
+    # Calculate metrics based on predicted labels
     accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, average='weighted')
-    recall = recall_score(all_labels, all_preds, average='weighted')
-    f1 = f1_score(all_labels, all_preds, average='weighted')
+    precision = precision_score(all_labels, all_preds, average='weighted', zero_division=0)
+    recall = recall_score(all_labels, all_preds, average='weighted', zero_division=0)
+    f1 = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
+    
     return total_loss / len(dataloader), accuracy, precision, recall, f1
 
 def validate(model, dataloader, device):
@@ -87,17 +92,25 @@ def validate(model, dataloader, device):
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Validation"):
             inputs = batch['input_ids'].to(device)
-            labels = batch['labels'].to(device)
-            outputs = model(inputs)
-            loss = torch.nn.functional.cross_entropy(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+            attention_mask = batch['attention_mask'].to(device)
+            label = batch['label'].to(device)
+            outputs = model(inputs, attention_mask=attention_mask)
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(outputs, label.unsqueeze(1))
             total_loss += loss.item()
-            preds = torch.argmax(outputs, dim=-1).view(-1).cpu().numpy()
+            
+            # Apply sigmoid and round to get binary predictions
+            preds = torch.round(torch.sigmoid(outputs)).cpu().numpy()
+            labels = label.cpu().numpy()
+            
             all_preds.extend(preds)
-            all_labels.extend(labels.view(-1).cpu().numpy())
+            all_labels.extend(labels)
+            
+    # Calculate metrics based on predicted labels
     accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, average='weighted')
-    recall = recall_score(all_labels, all_preds, average='weighted')
-    f1 = f1_score(all_labels, all_preds, average='weighted')
+    precision = precision_score(all_labels, all_preds, average='weighted', zero_division=0)
+    recall = recall_score(all_labels, all_preds, average='weighted', zero_division=0)
+    f1 = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
+    
     return total_loss / len(dataloader), accuracy, precision, recall, f1
 
 def main(args):
@@ -141,12 +154,11 @@ def main(args):
 
         if val_f1 > best_f1:
             best_f1 = val_f1
-            model.save_pretrained(args.output_dir)
+            torch.save(model.state_dict(), os.path.join(args.output_dir, "model.pth"))
             tokenizer.save_pretrained(args.output_dir)
             logging.info(f"Model saved to {args.output_dir}")
 
-        # Early stopping
-        if epoch > 0 and val_loss >= best_f1:
+        if val_f1 <= best_f1:
             logging.info("Early stopping")
             break
 
