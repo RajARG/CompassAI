@@ -118,12 +118,3 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="output", help="Directory to save the generated data")
     args = parser.parse_args()
     generate_data(args.api_key, args.nrow, args.output_dir)
-    # sp500_stocks = fetch_sp500_stocks()
-    # for symbol, name in sp500_stocks:
-    #     print(f"{symbol}: {name}")
-    
-    # stock = sp500_stocks[randint(0, len(sp500_stocks) - 1)]
-    # ticker, name = stock[0], stock[1]
-    # strange_dates = fetch_strange_dates(fetch_historical_data(ticker))
-    
-    # print(f"{ticker}: {name} has potential non-volatility swings during {strange_dates}")

@@ -13,9 +13,9 @@ from transformers import AutoTokenizer, get_linear_schedule_with_warmup, AdamW
 from DeepSeek.model import Transformer, ModelArgs
 
 class JsonDataset(Dataset):
-    def __init__(self, json_folder, tokenizer, max_length=512):
+    def __init__(self, json_folder, max_length=512):
         self.json_folder = json_folder
-        self.tokenizer = tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained("facebook/opt-350m") #hardcoded tokenizer
         self.max_length = max_length
         self.data = self.load_json_files()
         self.randomize_labels()
@@ -27,7 +27,7 @@ class JsonDataset(Dataset):
                 filepath = os.path.join(self.json_folder, filename)
                 with open(filepath, 'r') as f:
                     json_data = json.load(f)
-                    content = json_data['choices'][0]['message']['content']
+                    content = json_data['content']
                     citations = json_data['citations']
                     data.append((content, citations, True))  # Initially label all as True
         return data
@@ -60,7 +60,7 @@ def train(model, dataloader, optimizer, scheduler, device, grad_clip):
         attention_mask = batch['attention_mask'].to(device)
         label = batch['label'].to(device)
         optimizer.zero_grad()
-        outputs = model(inputs, attention_mask=attention_mask)
+        outputs = model(inputs, attention_mask) # Pass attention_mask
         loss = torch.nn.functional.binary_cross_entropy_with_logits(outputs, label.unsqueeze(1))
         loss.backward()
         if grad_clip > 0:
@@ -94,7 +94,7 @@ def validate(model, dataloader, device):
             inputs = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             label = batch['label'].to(device)
-            outputs = model(inputs, attention_mask=attention_mask)
+            outputs = model(inputs, attention_mask) # Pass attention_mask
             loss = torch.nn.functional.binary_cross_entropy_with_logits(outputs, label.unsqueeze(1))
             total_loss += loss.item()
             
@@ -116,8 +116,7 @@ def validate(model, dataloader, device):
 def main(args):
     logging.basicConfig(level=logging.INFO)
     device = torch.device(args.device)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    dataset = JsonDataset(args.json_folder, tokenizer)
+    dataset = JsonDataset(args.json_folder)
     val_size = int(len(dataset) * args.validation_split)
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
@@ -155,7 +154,6 @@ def main(args):
         if val_f1 > best_f1:
             best_f1 = val_f1
             torch.save(model.state_dict(), os.path.join(args.output_dir, "model.pth"))
-            tokenizer.save_pretrained(args.output_dir)
             logging.info(f"Model saved to {args.output_dir}")
 
         if val_f1 <= best_f1:
@@ -167,8 +165,6 @@ def main(args):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--model_name_or_path", type=str, required=True, help="Path to pre-trained model or model identifier from huggingface.co/models")
-    parser.add_argument("--dataset_name", type=str, required=True, help="Name of the dataset to use")
     parser.add_argument("--config", type=str, required=True, help="Path to the model configuration file")
     parser.add_argument("--output_dir", type=str, required=True, help="Directory to save the trained model")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")

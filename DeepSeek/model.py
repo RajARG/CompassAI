@@ -6,9 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.distributed as dist
-
-from kernel import act_quant, weight_dequant, fp8_gemm
-
+from torch.utils.checkpoint import checkpoint
 
 world_size = 1
 rank = 0
@@ -727,7 +725,7 @@ class Block(nn.Module):
         Returns:
             torch.Tensor: Output tensor after block computation.
         """
-        x = x + self.attn(self.attn_norm(x), start_pos, freqs_cis, mask)
+        x = checkpoint(self.attn, self.attn_norm(x), start_pos, freqs_cis, mask)
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
